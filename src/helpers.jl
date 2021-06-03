@@ -1,12 +1,24 @@
 macro endpoint(fun::Expr, epargs=:auto)
     fname = fun.args[1]
+    fnamex = Symbol(fname, "_x")
     fargs = fun.args[2:end]
     epargs === :auto && (epargs = Expr(:tuple, map(ex -> ex.args[1], fargs)...))
 
     ex = quote
         export $fname
-        Base.@__doc__ $fname(f::Forge, $(fargs...); kwargs...) =
+        Base.@__doc__ $fnamex(f::Forge, $(fargs...); kwargs...) =
             request(f, $fname, endpoint(f, $fname, $epargs...); kwargs...)
+
+        function $fname(f::Forge, $(fargs...); kwargs...)
+            V = into(f, $fname)
+            if V <: Vector
+                return @paginate $fnamex(f::Forge, $(fargs...); kwargs...)
+            else
+                return $fnamex(f::Forge, $(fargs...); kwargs...)
+            end
+        end
+
+        into(f::Forge, ::typeof($fnamex)) = into(f, $fname)
     end
 
     esc(ex)

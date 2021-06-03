@@ -13,12 +13,24 @@ The first argument of `fun` must be a [`Forge`](@ref) and it must return a `Tupl
 - `per_page::Int=100`: Number of entries per page.
 """
 macro paginate(ex::Expr, kws::Expr...)
-    (ex.args[2] isa Expr && ex.args[2].head === :parameters) ||
+    # If the expression doesn't have keyword arguments, add in a placeholder for them
+    if !(ex.args[2] isa Expr && ex.args[2].head === :parameters)
         insert!(ex.args, 2, Expr(:parameters))
+    end
+
+    # Add macro keywords to expression parameters
     append!(ex.args[2].args, map(kw -> Expr(:kw, kw.args...), kws))
+
+    # Insert function being called into 3rd arg slot
     insert!(ex.args, 3, ex.args[1])
+
+    # If no keyword arguments were added, remove the parameters in slot 2
     isempty(ex.args[2].args) && deleteat!(ex.args, 2)
+
+    # Replace first function symbol with GitForge.paginate
     ex.args[1] = :(GitForge.paginate)
+
+    # Escape expression
     esc(ex)
 end
 
@@ -30,14 +42,22 @@ mutable struct Paginator{T, F<:Function}
     last::Int
     resp::HTTP.Response
 
-    Paginator{T}(f::F) where {T, F <: Function} = new{T, F}(f, T[], 1, Dict(), typemax(Int))
+    function Paginator{T}(f::F) where {T, F <: Function}
+        new{T, F}(f, T[], 1, Dict(), typemax(Int))
+    end
 end
 
 function Paginator{T}(
     f::Function, args::Tuple, kwargs::Pairs, page::Int, per_page::Int,
 ) where T
+    # Generate a dict for the `page` and `per_page` arguments
     pages = Dict("page" => page, "per_page" => per_page)
+    # Merge a `query` keyword argument (should be a Dict) with the pages Dict if it exists
     query = merge(get(kwargs, :query, Dict()), pages)
+
+    # Create Paginator object where the function is `f` ran with args, kwargs, and the query
+    # keyword will be merged in with the `query` variable we created here as well as `q`
+    # which would be passed into the function
     return Paginator{T}(q -> f(args...; kwargs..., query=merge(query, q)))
 end
 
@@ -49,8 +69,14 @@ function paginate(
     fun::Function, f::Forge, args...;
     page::Int=1, per_page::Int=100, kwargs...,
 )
+    # For the passed in function, grab the type it expects to produce with the `into`
+    # function
     V = into(f, fun)
+    # In order for paginate to make sense, we need to only use it on endpoints/functions
+    # that expect to return a vector of some sort
     V <: Vector || throw(ArgumentError("Function must return Vector{T}"))
+
+    # Return a Paginator object
     return Paginator{eltype(V)}(fun, (f, args...), kwargs, page, per_page)
 end
 
